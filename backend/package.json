@@ -1,0 +1,5 @@
+{
+  "name": "zonecheck-backend",
+  "private": true,
+  "type": "module"
+}

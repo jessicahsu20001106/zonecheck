@@ -87,7 +87,7 @@ Zonecheck uses the following permissions:
 
 Host permissions:
 - `https://mail.google.com/*`
-- `https://api.anthropic.com/*`
+- `https://zonecheck-api.vercel.app/*`
 
 ---
 

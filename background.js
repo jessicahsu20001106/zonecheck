@@ -1,47 +1,50 @@
-// Service worker — handles all Claude API calls
+// Service worker — routes AI requests to the Zonecheck Vercel backend
 
-const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
+const ZONECHECK_SW_VERSION = "1.0.5-production";
+const ZONECHECK_API_BASE = "https://zonecheck-api.vercel.app";
 
-async function getApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get("claude_api_key", (result) => {
-      resolve(result.claude_api_key || null);
+console.info("[Zonecheck] service worker loaded", {
+  version: ZONECHECK_SW_VERSION,
+  apiBase: ZONECHECK_API_BASE,
+});
+
+async function postToBackend(path, body) {
+  const url = `${ZONECHECK_API_BASE}${path}`;
+  console.info("[Zonecheck] calling backend", { endpoint: path, url });
+
+  let response;
+  try {
+    response = await self.fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
-  });
-}
-
-async function callClaude(systemPrompt, userPrompt) {
-  const apiKey = await getApiKey();
-  if (!apiKey) {
-    throw new Error("No Claude API key configured. Open the Zonecheck settings to add your key.");
+  } catch (err) {
+    console.error("[Zonecheck] backend network error", {
+      endpoint: path,
+      url,
+      error: err?.message || String(err),
+    });
+    throw new Error(`Could not reach Zonecheck backend (${url}).`);
   }
 
-  // Use self.fetch to ensure the request goes through the service worker's
-  // own network stack, not the content script's page context.
-  const response = await self.fetch(CLAUDE_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API error ${response.status}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success) {
+    console.error("[Zonecheck] backend request failed", {
+      endpoint: path,
+      url,
+      status: response.status,
+      error: data.error || `HTTP ${response.status}`,
+    });
+    throw new Error(data.error || `API error ${response.status}`);
   }
 
-  const data = await response.json();
-  return data.content[0].text;
+  console.info("[Zonecheck] backend request succeeded", {
+    endpoint: path,
+    url,
+    status: response.status,
+  });
+  return data;
 }
 
 function coerceNum(n, fallback) {
@@ -418,49 +421,12 @@ async function detectTime(emailText, viewerContext = {}) {
       ? viewerContext.viewerTimeZone.trim()
       : "unknown";
 
-  const system = `You extract scheduling time references and the sender from email text. Return only valid JSON, no explanation or markdown.`;
-  const user = `Extract time references and the sender from this email text.
-
-The reader's local calendar date (for "today", "tomorrow", "next Monday", "this week", etc.) is: ${viewerLocalDate}.
-The reader's IANA timezone (hint when the email does not name a zone) is: ${viewerTimeZone}.
-
-Return JSON only in this shape:
-{
-  "senderName": "sender display or first name, or empty string if unknown",
-  "times": [
-    {
-      "original": "exact phrase from the email",
-      "hour": 14,
-      "minute": 0,
-      "timezone": "PST or America/Los_Angeles; null only if unknown",
-      "date": "2026-01-16",
-      "ambiguous": false
-    }
-  ]
-}
-
-Rules:
-- Support natural language and vague recruiter phrasing (e.g. "next Monday afternoon", "tomorrow", "Monday morning", "next Friday at noon"). Always resolve to ONE concrete calendar date and clock time in 24-hour local time for that date (minute 0 unless a specific minute is stated).
-- Parsing priority for the default clock when the phrase mixes relative/fuzzy wording with times in the text:
-  1) Explicit date + explicit clock + timezone from the phrase (use those).
-  2) Relative/fuzzy date + explicit time constraint phrases — these OVERRIDE generic part-of-day defaults: "after 2 PM", "no earlier than 3 PM", "not before 9 AM" → use that clock as the chosen time; "before 11 AM" with "morning" → use 9:00 or the latest sensible morning slot before that ceiling (e.g. before 11 AM with morning → 9:00); "before X" without "morning" → stay at or under one hour before X, preferring the model time if already valid.
-  3) "at 2 PM" / "at 2:30 PM" → use that clock.
-  4) Part of day with no numeric constraint: morning = 9:00, afternoon = 13:00, noon = 12:00, evening = 18:00. If only a date/day is given with no part of day and no clock (e.g. "tomorrow", "next Tuesday"), use 9:00.
-  5) If the phrase names a part of day but also states a standalone clock without "after"/"before"/"at" (e.g. "Monday afternoon 2 PM"), prefer that stated clock over the part-of-day default.
-- If the email states an explicit time, use that time; do not replace it with defaults.
-- Infer a reasonable near-future date when needed. Use the reader's local date above for relative phrases.
-- Relative weekdays: "next Tuesday" means the closest upcoming Tuesday within the next 7 days (do NOT add an extra week). Only skip to the following week for phrases like "the Tuesday after next" or "Tuesday after next".
-- For "timezone", use the same abbreviation or wording as in the email when it names one (e.g. EST, EDT, PST, PT, JST, GMT+9). Do not substitute a different daylight or standard label than the email used. Use null only when the email gives no clue.
-- If the email states the sender is in a city or zone (e.g. Tokyo, JST, Japan), the "timezone" field MUST reflect that — never infer the reader's local zone instead.
-- If the selected text names a timezone (e.g. "EST", "PST", "EDT", "PDT", "ET", "PT", "JST"), the "timezone" field MUST be that exact token.
-
-Selected text:
-${selectionText}
-
-Full email message (for sender timezone / location context):
-${messageText}`;
-
-  const raw = await callClaude(system, user);
+  const { raw } = await postToBackend("/api/detect-time", {
+    text: selectionText,
+    messageText,
+    viewerLocalDate,
+    viewerTimeZone,
+  });
   const jsonMatch = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
   if (!jsonMatch) throw new Error("No time references found in selected text.");
   const parsed = JSON.parse(jsonMatch[0]);
@@ -504,82 +470,8 @@ function sanitizeDraftPlaceholders(drafts, userReplyName) {
 
 async function generateReplyDraft(context) {
   const userSig = typeof context.userReplyName === "string" ? context.userReplyName.trim() : "";
-  const sigInstruction = userSig
-    ? `Signature for formal and warm only: after "Best," output exactly one more line with this exact sign-off string (same spelling and spacing; never brackets, never placeholder text): ${JSON.stringify(userSig)}`
-    : `No sign-off name is saved in settings. For formal and warm only: after "Best," output exactly one more line with a single plausible realistic first name (never bracketed placeholders, never the substring "Your name").`;
 
-  const system = `You write email replies for workplace scheduling and recruiting/interview coordination.
-
-Return ONLY valid JSON with exactly three string keys: "formal", "warm", "brief". No markdown, no code fences, no explanation, no extra keys. Plain text in each string; use \\n for line breaks.
-
-Never output bracketed or templated name placeholders (e.g. [Your name], [Your full name], {Your name}) in any tone. Use the real sign-off rules from the user message for formal and warm.
-
-Each tone must feel meaningfully different (not just shorter/longer).
-
---- TONE: formal ---
-- Professional, concise, structured; appropriate for recruiter or business email.
-- Greeting: address the sender by first name from context when reasonable; otherwise "Hi there,".
-- Body: clear, courteous; reflect scenario and times accurately (both zones when natural).
-- Closing: blank line, then "Best," on its own line, then the sign-off line per the user-message signature rules.
-- Polished and restrained; avoid slang and stacked exclamation marks.
-
---- TONE: warm ---
-- Friendly, natural, personable; conversational but polished—warmer than formal, still appropriate for recruiting/scheduling.
-- Match this shape (adapt wording to the scenario; keep times accurate):
-  1) Greeting line: "Hi [FirstName]!" using an exclamation when it feels natural (use sender first name from context; if unknown, "Hi there!").
-  2) One short paragraph: open with thanks (e.g. "Thanks so much for reaching out"), show genuine interest ("I'd love to connect" or similar when fitting), then the scheduling point in natural wording (e.g. a time "doesn't quite work" and a polite alternative question when suggesting; adjust for confirm/decline while keeping the same warm voice).
-  3) Blank line, then on its own line: "Looking forward to hearing from you!"
-  4) Blank line, then "Best," on its own line, then the sign-off line per the user-message signature rules (exact string when provided).
-- Not stiff like formal; not slangy or overly casual.
-
---- TONE: brief ---
-- Very short, coordination-focused; minimal friction.
-- Brief greeting (e.g. "Hi Name,").
-- MUST NOT include any sign-off, signature, "Best/Thanks/Regards/Cheers", name line, or closers like "Looking forward…"—end immediately after the core statement (typically 1–3 short sentences total including the greeting).
-- Accurate times from context.
-
-All three must accurately reflect the scenario and times.`;
-
-  let user;
-  const sender = context.senderName || "the sender";
-
-  if (context.type === "suggest") {
-    user = `Scenario: propose an alternative meeting time.
-
-Context:
-- Sender name (greet this person): ${sender}
-- Their proposed time: ${context.originalTime} ${context.theirTz}
-- My suggested alternative: ${context.suggestedTimeTheirs} ${context.theirTz} (${context.suggestedTimeYours} ${context.yourTz})
-
-${sigInstruction}
-
-Write three reply drafts as JSON: {"formal": "...", "warm": "...", "brief": "..."}
-Include both time zones in the suggested alternative where natural. Return only valid JSON.`;
-  } else if (context.type === "yes") {
-    user = `Scenario: confirm you can make the proposed time.
-
-Context:
-- Sender name (greet this person): ${sender}
-- Confirmed time: ${context.originalTime} ${context.theirTz} (${context.yourTime} ${context.yourTz})
-
-${sigInstruction}
-
-Write three reply drafts as JSON: {"formal": "...", "warm": "...", "brief": "..."}
-Return only valid JSON.`;
-  } else {
-    user = `Scenario: decline the proposed time politely without offering a specific alternative time in this message.
-
-Context:
-- Sender name (greet this person): ${sender}
-- Declined time: ${context.originalTime} ${context.theirTz}
-
-${sigInstruction}
-
-Write three reply drafts as JSON: {"formal": "...", "warm": "...", "brief": "..."}
-Return only valid JSON.`;
-  }
-
-  const raw = await callClaude(system, user);
+  const { raw } = await postToBackend("/api/generate-draft", { context });
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Failed to generate reply draft.");
   const parsed = JSON.parse(jsonMatch[0]);
@@ -588,20 +480,36 @@ Return only valid JSON.`;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "DETECT_TIME") {
+    console.info("[Zonecheck] DETECT_TIME → POST /api/detect-time");
     detectTime(message.text, {
       viewerLocalDate: message.viewerLocalDate,
       viewerTimeZone: message.viewerTimeZone,
       messageText: message.messageText,
     })
-      .then(({ senderName, times }) => sendResponse({ success: true, senderName, times }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .then(({ senderName, times }) => {
+        console.info("[Zonecheck] DETECT_TIME succeeded", { timeCount: times?.length ?? 0 });
+        sendResponse({ success: true, senderName, times });
+      })
+      .catch((err) => {
+        console.error("[Zonecheck] DETECT_TIME failed", { error: err.message });
+        sendResponse({ success: false, error: err.message });
+      });
     return true; // keep channel open for async
   }
 
   if (message.type === "GENERATE_DRAFT") {
+    console.info("[Zonecheck] GENERATE_DRAFT → POST /api/generate-draft", {
+      draftType: message.context?.type,
+    });
     generateReplyDraft(message.context)
-      .then((drafts) => sendResponse({ success: true, drafts }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .then((drafts) => {
+        console.info("[Zonecheck] GENERATE_DRAFT succeeded");
+        sendResponse({ success: true, drafts });
+      })
+      .catch((err) => {
+        console.error("[Zonecheck] GENERATE_DRAFT failed", { error: err.message });
+        sendResponse({ success: false, error: err.message });
+      });
     return true;
   }
 });

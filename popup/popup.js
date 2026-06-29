@@ -76,12 +76,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   chrome.storage.local.get(
-    ["claude_api_key", "user_timezone", "business_hours", "user_reply_name"],
+    ["user_timezone", "business_hours", "user_reply_name"],
     (result) => {
-      if (result.claude_api_key) {
-        document.getElementById("apiKey").value = result.claude_api_key;
-      }
-
       const nameEl = document.getElementById("userReplyName");
       if (nameEl && typeof result.user_reply_name === "string") {
         nameEl.value = result.user_reply_name;
@@ -106,21 +102,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   );
 
-  document.getElementById("toggleKey").addEventListener("click", () => {
-    const input = document.getElementById("apiKey");
-    input.type = input.type === "password" ? "text" : "password";
-  });
-
   document.getElementById("saveBtn").addEventListener("click", () => {
-    const apiKey = document.getElementById("apiKey").value.trim();
     const timezone = getSettingsTimezoneIana();
     const bhStart = parseInt(document.getElementById("bhStart").value, 10);
     const bhEnd = parseInt(document.getElementById("bhEnd").value, 10);
 
-    if (apiKey && !apiKey.startsWith("sk-ant-")) {
-      showStatus("API key should start with sk-ant-", true);
-      return;
-    }
     if (bhEnd <= bhStart) {
       showStatus("End time must be after start time", true);
       return;
@@ -131,7 +117,6 @@ document.addEventListener("DOMContentLoaded", () => {
       business_hours: { start: bhStart, end: bhEnd },
       user_reply_name: document.getElementById("userReplyName")?.value.trim() || "",
     };
-    if (apiKey) data.claude_api_key = apiKey;
 
     chrome.storage.local.set(data, () => {
       showStatus("Settings saved ✓", false);

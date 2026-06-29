@@ -1971,32 +1971,6 @@ body.zc-settings-page {
   font-size: 12px;
 }
 
-.zc-settings-api-key {
-  position: relative;
-}
-
-.zc-settings-api-key .zc-settings-input {
-  padding-right: 40px;
-}
-
-.zc-settings-toggle-key {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--zc-subtle);
-  font-size: 14px;
-  padding: 0;
-  line-height: 1;
-}
-
-.zc-settings-toggle-key:hover {
-  color: var(--zc-muted);
-}
-
 .zc-settings-hours {
   display: flex;
   align-items: center;

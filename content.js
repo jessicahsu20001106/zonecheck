@@ -1323,7 +1323,6 @@
       </div>
       <div class="zc-error-body">
         <span class="zc-status-pill zc-pill-red">${escHtml(msg)}</span>
-        ${msg.includes("API key") ? `<p class="zc-hint">Open Zonecheck settings to configure your Claude API key.</p>` : ""}
       </div>`;
     el.querySelector(".zc-close").addEventListener("click", closePopover);
     bindPopoverDrag(el);

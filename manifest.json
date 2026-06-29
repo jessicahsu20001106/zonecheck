@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Zonecheck",
-  "version": "1.0.2",
+  "version": "1.0.5",
   "description": "AI-powered timezone scheduling for Gmail. Detect times, compare availability, and draft scheduling replies.",
   "permissions": [
     "storage",
@@ -9,7 +9,7 @@
   ],
   "host_permissions": [
     "https://mail.google.com/*",
-    "https://api.anthropic.com/*"
+    "https://zonecheck-api.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js"
