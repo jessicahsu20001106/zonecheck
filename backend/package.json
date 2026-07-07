@@ -1,5 +1,9 @@
 {
   "name": "zonecheck-backend",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.0"
+  }
 }
